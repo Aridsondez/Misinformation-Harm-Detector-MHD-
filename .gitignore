@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
+# Virtualenv (if you ever use one locally)
+venv/
+.env/
+
+# Node (frontend)
+node_modules/
+build/
+dist/
+
+# Docker
+*.log
+*.pid
+
+# Database volumes
+postgres_data/
