@@ -1,0 +1,21 @@
+[
+  {
+    "claim_text": "5g causes covid",
+    "evidence": [
+      {"source": "WHO", "confidence": 0.98, "snippet": "No scientific evidence links 5G to COVID-19.", "url": "https://www.who.int/"},
+      {"source": "Wikipedia", "confidence": 0.90, "snippet": "5G is a cellular technology; viruses cannot travel on radio waves.", "url": "https://en.wikipedia.org/"}
+    ]
+  },
+  {
+    "claim_text": "drinking bleach cures illness",
+    "evidence": [
+      {"source": "CDC", "confidence": 0.99, "snippet": "Bleach is toxic and should never be ingested.", "url": "https://www.cdc.gov/"}
+    ]
+  },
+  {
+    "claim_text": "election day is on wednesday this year",
+    "evidence": [
+      {"source": "USA.gov", "confidence": 0.95, "snippet": "U.S. federal elections occur on a Tuesday.", "url": "https://www.usa.gov/"}
+    ]
+  }
+]

@@ -3,8 +3,22 @@ from fastapi import FastAPI, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from app.db import SessionLocal, Result
 from app.schemas import AnalyzeRequest, ResultOut, EvidenceItem
+from agents.orchestrator import Orchestrator
+from fastapi.middleware.cors import CORSMiddleware
+
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],           # for hackathon demo; lock down later
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+orch = Orchestrator()
+
 
 def get_db():
     db = SessionLocal()
@@ -18,22 +32,20 @@ def normalize(text: str) -> str:
 def analyze(payload: AnalyzeRequest, response: Response, db: Session = Depends(get_db)):
     norm = normalize(payload.text)
 
-    # Return existing if found
     existing = db.query(Result).filter(Result.text == norm).first()
     if existing:
         return existing
 
-    # Dummy pipeline; replace with agents later
-    # --- begin placeholder ---
-    from random import randint
-    harm = randint(0, 100)
-    action = "inform" if harm < 25 else "flag" if harm < 60 else "alert"
-    evidence = [
-        {"source":"Wikipedia","confidence":0.92,"snippet":"Summary snippet...", "url":"https://en.wikipedia.org/..."}
-    ]
-    # --- end placeholder ---
+    # Run local agent pipeline
+    out = orch.run_pipeline(norm)
 
-    new = Result(text=norm, harm_score=harm, action=action, evidence=evidence)
+    # Persist
+    new = Result(
+        text=norm,
+        harm_score=int(out["harm_score"]),
+        action=out["action"],
+        evidence=out["evidence"],  # JSONB
+    )
     db.add(new); db.commit(); db.refresh(new)
 
     response.status_code = status.HTTP_201_CREATED
