@@ -3,14 +3,8 @@ from .base import Agent
 
 class ActionAgent(Agent):
     name = "action"
-
     def run(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        score = int(payload["harm_score"])
-        if score < 25:
-            action = "inform"
-        elif score < 60:
-            action = "flag"
-        else:
-            action = "alert"
+        s = int(payload["harm_score"])
+        action = "inform" if s < 25 else "flag" if s < 60 else "alert"
         payload["action"] = action
         return payload

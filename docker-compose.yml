@@ -10,7 +10,12 @@ services:
       - ./backend:/app
     depends_on:
       - db
-
+    restart: on-failure
+    environment:
+      - GEMENI_API_KEY=${GEMINI_API_KEY}
+      - NEWS_API_KEY=${NEWS_API_KEY}
+    env_file:
+      - .env   
   frontend:
     build: ./frontend
     container_name: mhd-frontend

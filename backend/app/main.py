@@ -65,3 +65,8 @@ def list_results(limit: int = 20, offset: int = 0, text: str | None = None, db: 
     if text:
         q = q.filter(Result.text == normalize(text))
     return q.order_by(Result.id.desc()).offset(offset).limit(limit).all()
+
+@app.post("/debug/analyze")
+def debug_analyze(payload: AnalyzeRequest):
+    norm = normalize(payload.text)
+    return orch.run_pipeline(norm, debug=True)

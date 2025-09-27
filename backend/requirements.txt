@@ -2,3 +2,13 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 psycopg2-binary
+python-dotenv
+requests
+tenacity
+google-generativeai
+readability-lxml
+beautifulsoup4
+lxml
+scikit-learn
+youtube-transcript-api
+spacy

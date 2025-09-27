@@ -20,3 +20,6 @@ dist/
 
 # Database volumes
 postgres_data/
+
+.env.local
+.env
