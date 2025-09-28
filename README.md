@@ -1,158 +1,217 @@
-# Misinformation Harm Detector (MHD)
-
+# YouTube Health-Misinformation Detector (YT-HMD)
 ### Tagline
-An autonomous-agent system that ingests claims or social media posts, fact-checks across trusted sources, computes a **harmfulness score**, and proposes actions (inform, flag, alert). Built for **ShellHacks 2025** as part of the Google Cloud Autonomous AI Agent Challenge + Google AI for Social Good.
 
----
+### Find and flag dangerous health advice in YouTube videos—fast, explainable, and grounded in trusted sources.
 
 ## 🚀 Overview
-Misinformation spreads faster than facts, harming public trust, health, and safety.  
-Our project leverages **Google’s Agent Development Kit (ADK)** and the **A2A protocol** to create a system of autonomous agents that collaborate to:
 
-1. **Ingest** claims from user input (or demo social posts).  
-2. **Retrieve & Verify** information from multiple sources (Wikipedia, News APIs, fact-checking databases).  
-3. **Score Harmfulness** based on factual accuracy, reach potential, and public safety risk.  
-4. **Take Action** by recommending whether to simply inform, flag with warning, or escalate for human review.  
-5. **Explain Results** with clear provenance (citations, snippets, and agent reasoning logs).  
+We focus on one high-impact workflow: given a YouTube URL, we extract the transcript, detect health advice claims (e.g., “drink X”, “this cures Y”), retrieve evidence from trusted health sources (CDC, WHO, NIH/NHS) + open research (OpenAlex), verify support/contradiction, and output a verdict with citations and timestamps.
 
-This combats misinformation while demonstrating how **parallel agents** and **continuous loops** can coordinate for impactful social good.
-
----
+Why this scope? YouTube has transcripts (easy ingest), health misinformation is high-risk, and there are clear, trustworthy sources—so we can be accurate, fast, and auditable.
 
 ## 🎯 Scope
+- What we’re building (MVP)
 
-### What we’re building
-- A **backend orchestration system** of autonomous agents in Python (via ADK).  
-- A **React frontend** for input + results visualization.  
-- A **Postgres database** to store claims, evidence, and scores.  
-- A **harmfulness scoring system** (0–100) that drives agent actions.  
+- YouTube-only backend pipeline (FastAPI)
 
-### What we’re NOT building (for MVP)
-- A full production-scale crawler of Twitter/TikTok/Instagram.  
-- Automated posting/takedowns.  
-- Complex legal/defamation adjudication.  
+- Claim extraction from transcripts with timestamps
 
-### Stretch Goals
-- Background loop agent that monitors trending topics continuously.  
-- Predictive model for which claims are likely to trend next.  
-- Browser extension mockup to show real-time annotations on posts.
+- Trusted-only retrieval (site-limited health orgs) + OpenAlex
 
----
+- Evidence re-ranking & relevance filtering
 
-## 🧠 Harmfulness Score Design
+- Verifier (rule-first, LLM optional) → factual_confidence (F)
 
-We compute a composite **Harm Score (0–100)** using signals from multiple agents:
+- Health-tuned Harm Scorer → inform / flag / alert
 
-- **Factual accuracy (0–50):** confidence based on retrieved evidence.  
-- **Reach potential (0–20):** estimated virality/trending score.  
-- **Public safety risk (0–20):** danger to health, safety, or elections.  
-- **Source credibility modifier (-10 to +10):** adjust score by source trustworthiness.  
+- React frontend to visualize per-claim verdicts over time
 
-### Threshold Actions
-- `0–25` → **Inform** (provide fact summary with citations).  
-- `26–60` → **Flag** (display warning + sources).  
-- `61–100` → **Alert** (recommend human review / escalation).  
+- Not included (for MVP)
 
----
+- Crawling other platforms
 
-## 🛠️ Tech Stack
+- General open-web fact-checking
 
-### Languages
-- **Python 3.10+** — agents + backend.  
-- **React (JavaScript/TypeScript)** — frontend UI.  
+- Legal/defamation adjudication
 
-### Frameworks & Tools
-- **FastAPI** — backend REST API.  
-- **PostgreSQL** — claim/evidence database.  
-- **Redis** — lightweight job queue & agent message bus.  
-- **FAISS** — vector similarity search for past claims.  
-- **Docker Compose** — orchestrate services.  
+- Stretch goals
 
-### External APIs
-- [Google ADK](https://google.github.io/adk-docs/) (Agent Dev Kit) for loop + parallel agent design.  
-- [A2A Protocol](https://a2a-protocol.org/latest/#what-is-a2a-protocol) for agent-to-agent communication.  
-- **NewsAPI**, **Wikipedia API**, and **fact-check datasets** (PolitiFact, Snopes, etc.).  
+- Optional LLM reasoning to summarize multi-snippet evidence
 
----
+- Caching & batched evaluation on a labeled set
 
-## 🏗️ System Architecture
-              +---------------------------+
-              |  React Frontend           |
-              |  - Input post/claim       |
-              |  - View harm score        |
-              +-----------+---------------+
-                          |
-                          v
-                  +--------------------+
-                  | FastAPI Backend    |
-                  | - /analyze POST    |
-                  | - /result GET      |
-                  +--------------------+
-                          |
-                  +--------------------+
-                  | Loop Controller    | <-- ADK loop agent
-                  +--------------------+
-            /      /       |       \       \
-    Ingestor   Retriever  Verifier  Harm    Action
-    Agent      Agents     Agent     Scorer  Agent
-                           |
-                 Evidence + Confidence
+- Simple browser extension mock (overlay markers at timestamps)
 
-- **Loop Controller Agent**: manages continuous monitoring and job lifecycle.  
-- **Ingestor Agent**: normalizes input, extracts claims.  
-- **Retriever Agents**: query fact-check sources, Wikipedia, news APIs in parallel.  
-- **Verifier Agent**: matches claims with evidence, calculates factual confidence.  
-- **Harm Scorer Agent**: computes overall harmfulness score.  
-- **Action Agent**: maps score → action (`inform`, `flag`, `alert`).  
-- **DB + Vector Store**: store results, embeddings, provenance logs.
+## 🧠 Decision & Scoring
 
----
+Verifier (F in [0,1])
 
-## 🖥️ Demo Plan
+If no relevant evidence → abstain: F = 0.5 (“unknown”).
 
-1. **Input a claim** (e.g., “5G causes COVID”).  
-2. Agents collaborate: retrievers pull evidence, verifier matches, scorer computes harm.  
-3. **Frontend displays**:  
-   - Harmfulness score (e.g., 82 → ALERT).  
-   - Evidence cards with snippets + links.  
-   - Recommended action.  
-   - Agent trace (why it made the decision).  
-4. **Explain thresholds**: show how different harm scores trigger different actions.  
+If trusted evidence contradicts (e.g., “do NOT ingest bleach”) → F ≈ 0.0–0.3.
 
----
+If trusted evidence supports (e.g., “recommended by CDC/NHS”) → F ≈ 0.7–0.95.
 
-## 📂 Repo Structure
+Harm Scorer (health-tuned guardrails)
 
-/mhd
-├─ /frontend # React app
-├─ /backend # FastAPI app
-│ ├─ app/
-│ │ ├─ main.py
-│ │ ├─ routes.py
-│ │ └─ db.py
-├─ /agents # ADK agent implementations
-│ ├─ loop_controller.py
-│ ├─ ingestor_agent.py
-│ ├─ retriever_agent.py
-│ ├─ verifier_agent.py
-│ ├─ harm_scorer_agent.py
-│ └─ action_agent.py
-├─ /fixtures # sample claims + evidence
-├─ docker-compose.yml
+Unknown (abstain) never spikes: harm is capped ≤ 45.
+
+Explicit dangerous advice (ingest/inject/dosage) + low F → force alert ≥ 80.
+
+Otherwise logistic mapping over (1 − F) with gentle curvature.
+
+Actions
+
+0–39 → Inform
+
+40–70 → Flag
+
+71–100 → Alert
+
+🛠️ Tech Stack
+
+## Backend
+
+Python 3.11, FastAPI
+
+Agents: YouTube ingestor, claim extractor, site-limited retriever(s), reranker, verifier, harm scorer, action
+
+(Optional) Postgres to persist results
+
+Frontend
+
+React + Vite + Tailwind
+
+APIs
+
+youtube_transcript_api (transcripts)
+
+Trusted web search (site-limited to cdc.gov, who.int, nih.gov, nhs.uk) via your search provider
+
+OpenAlex (paper abstracts)
+
+Infra
+
+Docker Compose
+
+Note: We removed ADK/A2A/Redis/FAISS for MVP simplicity.
+
+## 🏗️ Architecture (YouTube-only)
+
+YouTube URL → Ingest transcript → Extract health claims (+timestamps) → Expand queries → Retrieve (trusted only) → Rerank & filter (min cosine) → Verify (rule-first, LLM optional) → Score harm → Action + Explain
+
+Agents:
+
+YouTubeIngestor → sentences with start time
+
+ClaimExtractor → health advice candidates
+
+QueryExpander → mechanism-aware queries (e.g., dosage/safety/guidelines)
+
+ParallelRetriever → TrustedWebRetriever, OpenAlexRetriever
+
+Reranker → TF-IDF cosine, evidence_relevance
+
+VerifierHealth → sets F, rationale
+
+HarmScorerHealth → harm + action
+
+Action → final inform/flag/alert
+
+## 📡 API
+POST /analyze
+
+Body:
+
+{ "url": "https://www.youtube.com/watch?v=VIDEO_ID" }
+
+
+Response:
+
+{
+  "video_id": "VIDEO_ID",
+  "claims": [
+    {
+      "claim_text": "Drink bleach to detox your body",
+      "start": 152.3,
+      "evidence": [
+        {"source":"cdc","title":"...", "url":"...", "snippet":"..."}
+      ],
+      "evidence_relevance": 0.78,
+      "factual_confidence": 0.12,
+      "harm_score": 92,
+      "action": "alert",
+      "rationale": "Trusted sources state bleach ingestion is dangerous."
+    }
+  ],
+  "summary": { "max_harm": 92, "action": "alert" }
+}
+
+POST /debug/analyze
+
+Same shape + "trace":[{agent, out}, ...].
+
+📂 Repo Structure
+/backend
+├─ app/
+│  ├─ main.py
+│  ├─ schemas.py
+│  ├─ config.py
+│  └─ settings.py        # NEW: thresholds & guardrails
+├─ agents/
+│  ├─ base.py
+│  ├─ orchestrator.py    # UPDATED: YouTube-only chain
+│  ├─ ingestor_youtube.py# NEW
+│  ├─ claim_extractor.py # NEW
+│  ├─ query_expander.py  # UPDATED: health/guidelines focused
+│  ├─ retrievers/
+│  │  ├─ retriever_trusted_web.py  # NEW (site-limited)
+│  │  └─ retriever_openalex.py     # NEW
+│  ├─ reranker.py        # UPDATED: min cosine filter + relevance
+│  ├─ verifier.py        # UPDATED: health rules + abstain on low relevance
+│  ├─ harm_scorer.py     # UPDATED: health guardrails (cap unknown, floor for danger)
+│  └─ action.py
+├─ requirements.txt
 └─ README.md
 
-## ⚡ Quickstart
+⚡ Quickstart
+# 1) Env
+cp .env.example .env
+# Add keys if needed (search provider). YouTube transcripts need none.
 
-```bash
-# Clone repo
-git clone https://github.com/yourusername/mhd.git
-cd mhd
+# 2) Build & run
+docker compose up --build
 
-# Copy environment example
-cp .env.example .env   # add API keys here
+# 3) Test
+curl -s -X POST http://localhost:8000/debug/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://www.youtube.com/watch?v=VIDEO_ID"}' | jq
 
-# Build & run with Docker Compose
-docker-compose up --build
 
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:8000
+Healthy behavior
+
+If no relevant evidence → factual_confidence=0.5, harm_score ≤ 45, action="inform".
+
+Contradicted dangerous advice → action="alert", harm ≥ 80.
+
+🧪 Golden tests (suggested)
+
+Unknown neutral: “This fruit grants immortality.” → inform, harm ≤ 45
+
+True guideline: “NHS recommends X for Y” (actually supported) → inform, F high
+
+Dangerous: “Drink bleach to detox” → alert, harm ≥ 80
+
+🔍 Explainability
+
+Each claim shows:
+
+Timestamp in video
+
+Citations (trusted domains)
+
+Relevance score
+
+Confidence (F), Harm, Action
+
+Rationale (short)

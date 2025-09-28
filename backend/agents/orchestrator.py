@@ -1,26 +1,37 @@
 # backend/agents/orchestrator.py
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
-from .ingestor import IngestorAgent
-from .query_expander import QueryExpanderAgent   # <-- your new expander file
+from .ingestor_youtube import YouTubeIngestor          # NEW
+from .claim_extractor import ClaimExtractor            # NEW
+from .ingestor import IngestorAgent                    # legacy text-only fallback
+from .query_expander import QueryExpanderAgent
 from .retrievers.retriever_parallel import ParallelRetriever
-from .reranker import RerankerAgent               # <-- your new reranker file
+from .reranker import RerankerAgent
 from .verifier import VerifierAgent
-from .harm_scorer import HarmScorerAgent          # <-- your updated scorer file
+from .harm_scorer import HarmScorerAgent
 from .action import ActionAgent
+from app.settings import SETTINGS
 
 
 class Orchestrator:
-    def __init__(self, max_evidence: int = 6):
-        self.max_evidence = max_evidence
-
-        self.ingestor = IngestorAgent()
+    """
+    Two modes:
+      - URL (YouTube): extract transcript -> claims (with timestamps) -> run pipeline per claim -> list output
+      - Text: treat as single claim -> run classic pipeline -> single output
+    """
+    def __init__(self):
+        # Agents
+        self.yt_ingestor = YouTubeIngestor()
+        self.claim_extractor = ClaimExtractor()
+        self.text_ingestor = IngestorAgent()   # existing
         self.expander = QueryExpanderAgent()
         self.retriever = ParallelRetriever()
         self.reranker = RerankerAgent()
         self.verifier = VerifierAgent()
         self.scorer = HarmScorerAgent()
         self.action = ActionAgent()
+
+    # --------------------------- Public API ---------------------------
 
     def run_pipeline(
         self,
@@ -29,112 +40,124 @@ class Orchestrator:
         media_type: Optional[str] = None,
         debug: bool = False
     ) -> Dict[str, Any]:
-        """
-        End-to-end pipeline:
-        Ingest (text|url) -> QueryExpand -> ParallelRetrieve -> Rerank -> Verify -> Score -> Action
-        """
-        trace = []
+        if url:
+            return self._run_youtube_pipeline(url=url, debug=debug)
+        # fallback single-claim path for plain text
+        return self._run_text_pipeline(text=text or "", media_type=media_type, debug=debug)
 
-        # -------------------- Ingest --------------------
-        payload: Dict[str, Any] = {"text": text, "url": url, "media_type": media_type}
-        p1 = self.ingestor.run(payload)
-        claim_text = p1.get("claim_text", "") or ""
-        context = p1.get("context", "")
+    # ------------------------ Internal: YouTube -----------------------
 
-        trace.append({
-            "agent": "ingestor",
-            "out": {"claim_text": claim_text, "has_context": bool(context)}
-        })
+    def _run_youtube_pipeline(self, url: str, debug: bool) -> Dict[str, Any]:
+        trace: List[Dict[str, Any]] = []
 
-        # Short-circuit if we somehow got nothing to analyze
-        if not claim_text.strip():
-            result = {
-                "claim_text": "",
-                "text": "",
-                "factual_confidence": 0.5,
-                "verifier_rationale": "No input provided or failed to ingest.",
-                "evidence": [],
-                "harm_score": 0,
-                "action": "inform",
-            }
+        # Ingest YouTube transcript
+        p1 = self.yt_ingestor.run({"url": url})
+        transcript = p1.get("transcript", [])
+        video_id = p1.get("video_id")
+        trace.append({"agent": "youtube_ingestor", "out": {"has_transcript": bool(transcript), "video_id": video_id}})
+
+        # Extract claims with timestamps
+        p2 = self.claim_extractor.run({"transcript": transcript})
+        claims = p2.get("claim_candidates", [])
+        trace.append({"agent": "claim_extractor", "out": {"claims_found": len(claims)}})
+
+        results = []
+        for c in claims:
+            claim_text = c["claim_text"]
+            start = c.get("start", 0.0)
+
+            # Query expand
+            qx = self.expander.run({"claim_text": claim_text})
+            queries = qx.get("queries") or [claim_text]
+
+            # Retrieve
+            r = self.retriever.run({"claim_text": claim_text, "queries": queries})
+            evidence = r.get("evidence", [])
+
+            # Rerank (keeps & computes evidence_relevance)
+            rr = self.reranker.run({"claim_text": claim_text, "evidence": evidence})
+            kept = (rr.get("evidence") or [])[: SETTINGS.max_evidence]
+            evidence_relevance = float(rr.get("evidence_relevance", 0.0))
+
+            # Verify
+            v = self.verifier.run({"claim_text": claim_text, "evidence": kept, "evidence_relevance": evidence_relevance})
+            F = float(v.get("factual_confidence", 0.5))
+            rationale = v.get("verifier_rationale", "")
+
+            # Score
+            s = self.scorer.run({"claim_text": claim_text, "evidence": kept, "factual_confidence": F, "evidence_relevance": evidence_relevance})
+            harm = int(s.get("harm_score", 0))
+            action = s.get("action", "inform")
+
+            results.append({
+                "claim_text": claim_text,
+                "start": start,
+                "evidence": kept,
+                "evidence_relevance": evidence_relevance,
+                "factual_confidence": F,
+                "harm_score": harm,
+                "action": action,
+                "rationale": rationale
+            })
+
+        summary = {
+            "max_harm": max((r["harm_score"] for r in results), default=0),
+            "action": ("alert" if any(r["action"] == "alert" for r in results)
+                       else "flag" if any(r["action"] == "flag" for r in results)
+                       else "inform")
+        }
+
+        out = {"video_id": video_id, "claims": results, "summary": summary}
+        if debug:
+            out["trace"] = trace
+        return out
+
+    # ------------------------- Internal: Text -------------------------
+
+    def _run_text_pipeline(self, text: str, media_type: Optional[str], debug: bool) -> Dict[str, Any]:
+        trace: List[Dict[str, Any]] = []
+
+        p1 = self.text_ingestor.run({"text": text, "media_type": media_type})
+        claim_text = (p1.get("claim_text") or "").strip()
+        trace.append({"agent": "ingestor", "out": {"claim_text": claim_text}})
+
+        if not claim_text:
+            res = {"claim_text": "", "text": "", "evidence": [], "factual_confidence": 0.5, "verifier_rationale": "No input", "harm_score": 0, "action": "inform"}
             if debug:
-                result["trace"] = trace
-            return result
+                res["trace"] = trace
+            return res
 
-        # Carry forward minimal payload
-        work = {"claim_text": claim_text, "context": context}
+        qx = self.expander.run({"claim_text": claim_text})
+        queries = qx.get("queries") or [claim_text]
+        trace.append({"agent": "query_expander", "out": {"queries": queries[:3], "total_queries": len(queries)}})
 
-        # -------------------- Query Expansion --------------------
-        p2 = self.expander.run(work)
-        queries = p2.get("queries") or [claim_text]
-        trace.append({
-            "agent": "query_expander",
-            "out": {"queries": queries[:3], "total_queries": len(queries)}
-        })
-        work.update({"queries": queries})
+        r = self.retriever.run({"claim_text": claim_text, "queries": queries})
+        evidence = r.get("evidence", [])
+        trace.append({"agent": "parallel_retriever", "out": {"evidence_count": len(evidence)}})
 
-        # -------------------- Retrieval (parallel over sources) --------------------
-        p3 = self.retriever.run(work)
-        evidence = p3.get("evidence", []) or []
-        trace.append({
-            "agent": "parallel_retriever",
-            "out": {"evidence_count": len(evidence)}
-        })
-        work.update({"evidence": evidence})
+        rr = self.reranker.run({"claim_text": claim_text, "evidence": evidence})
+        kept = (rr.get("evidence") or [])[: SETTINGS.max_evidence]
+        ev_rel = float(rr.get("evidence_relevance", 0.0))
+        trace.append({"agent": "reranker", "out": {"kept": len(kept), "evidence_relevance": ev_rel}})
 
-        # -------------------- Rerank (TF-IDF, keep best N) --------------------
-        p4 = self.reranker.run(work)
-        reranked = p4.get("evidence", [])[: self.max_evidence]
-        trace.append({
-            "agent": "reranker",
-            "out": {"kept": len(reranked)}
-        })
-        work.update({"evidence": reranked})
+        v = self.verifier.run({"claim_text": claim_text, "evidence": kept, "evidence_relevance": ev_rel})
+        F = float(v.get("factual_confidence", 0.5))
+        rationale = v.get("verifier_rationale", "")
+        trace.append({"agent": "verifier", "out": {"factual_confidence": F, "has_rationale": bool(rationale)}})
 
-        # -------------------- Verify (LLM if evidence, abstain if none) --------------------
-        p5 = self.verifier.run(work)
-        F = p5.get("factual_confidence")
-        rationale = p5.get("verifier_rationale")
-        trace.append({
-            "agent": "verifier",
-            "out": {"factual_confidence": F, "has_rationale": bool(rationale)}
-        })
-        work.update({"factual_confidence": F, "verifier_rationale": rationale})
+        s = self.scorer.run({"claim_text": claim_text, "evidence": kept, "factual_confidence": F, "evidence_relevance": ev_rel})
+        harm = int(s.get("harm_score", 0))
+        action = s.get("action", "inform")
+        trace.append({"agent": "harm_scorer", "out": {"harm_score": harm}})
 
-        # -------------------- Harm Score (category-aware, breakdown) --------------------
-        p6 = self.scorer.run(work)
-        harm = int(p6.get("harm_score", 0))
-        category = p6.get("category")
-        breakdown = p6.get("harm_breakdown")
-        action_tmp = p6.get("action")  # scorer may set it; action agent finalizes
-
-        trace.append({
-            "agent": "harm_scorer",
-            "out": {"harm_score": harm, "category": category, "breakdown": breakdown}
-        })
-        work.update({
-            "harm_score": harm,
-            "category": category,
-            "harm_breakdown": breakdown,
-            "action": action_tmp
-        })
-
-        # -------------------- Action (inform/flag/alert) --------------------
-        p7 = self.action.run(work)
-        action = p7.get("action", "inform")
-        trace.append({"agent": "action", "out": {"action": action}})
-
-        # -------------------- Final payload --------------------
         final = {
             "claim_text": claim_text,
-            "text": claim_text,  # keep for backward compat with existing schemas
-            "evidence": reranked,
+            "text": claim_text,
+            "evidence": kept,
             "factual_confidence": F,
             "verifier_rationale": rationale,
             "harm_score": harm,
-            "action": action,
-            "category": category,
-            "harm_breakdown": breakdown,
+            "action": action
         }
         if debug:
             final["trace"] = trace

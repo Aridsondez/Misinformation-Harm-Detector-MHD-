@@ -11,4 +11,5 @@ beautifulsoup4
 lxml
 scikit-learn
 youtube-transcript-api
+beautifulsoup4
 spacy

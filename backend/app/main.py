@@ -25,12 +25,31 @@ def get_db():
     try: yield db
     finally: db.close()
 
-def normalize(text: str) -> str:
-    return " ".join(text.split()).strip().lower()
+
+@app.post("/analyze", status_code=201)
+def analyze(req: AnalyzeRequest):
+    # IMPORTANT: pass req.url and req.media_type
+    text = (req.text or "").strip()
+    url = str(req.url) if req.url else None
+    try:
+        res = orch.run_pipeline(text=text, url=url, media_type=req.media_type, debug=False)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/debug/analyze", status_code=201)
+def debug_analyze(req: AnalyzeRequest):
+    text = (req.text or "").strip()
+    url = str(req.url) if req.url else None
+    try:
+        res = orch.run_pipeline(text=text, url=url, media_type=req.media_type, debug=True)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/analyze", response_model=ResultOut)
 def analyze(payload: AnalyzeRequest, response: Response, db: Session = Depends(get_db)):
-    norm = normalize(payload.text)
+    norm = payload.text or ""
 
     existing = db.query(Result).filter(Result.text == norm).first()
     if existing:
@@ -65,8 +84,3 @@ def list_results(limit: int = 20, offset: int = 0, text: str | None = None, db: 
     if text:
         q = q.filter(Result.text == normalize(text))
     return q.order_by(Result.id.desc()).offset(offset).limit(limit).all()
-
-@app.post("/debug/analyze")
-def debug_analyze(payload: AnalyzeRequest):
-    norm = normalize(payload.text)
-    return orch.run_pipeline(norm, debug=True)
